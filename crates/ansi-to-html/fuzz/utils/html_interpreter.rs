@@ -7,7 +7,7 @@ use html5ever::{
     Attribute, QualName,
 };
 
-use std::{cell::RefCell, collections::BTreeSet, mem, str::FromStr};
+use std::{cell::RefCell, mem, str::FromStr};
 
 /// Ensures that our optimized HTML output is semantically equivalent to the unoptimized output
 /// (along with verifying some other properties like our HTML being reasonably well-formed)
@@ -223,7 +223,9 @@ pub struct Styles {
     italic: bool,
     underlined: Option<UnderlineStyle>,
     crossed_out: bool,
-    spans: BTreeSet<Vec<Attr>>,
+    opacity: Option<String>,
+    color: Option<String>,
+    background: Option<String>,
 }
 
 impl Styles {
@@ -247,7 +249,21 @@ impl Styles {
                 self.underlined = Some(attrs.pop().into());
             }
             RawStyle::CrossedOut => self.crossed_out = true,
-            RawStyle::Span(span) => _ = self.spans.insert(span),
+            RawStyle::Span(attrs) => {
+                let [Attr { name, value }] = attrs.as_slice() else {
+                    panic!("Unexpected number of attrs! {attrs:#?}");
+                };
+                assert_eq!(name, "style");
+
+                let (style_key, style_value) = value.split_once(':').unwrap();
+                let style_value = style_value.to_owned();
+                match style_key {
+                    "opacity" => self.opacity = Some(style_value),
+                    "color" => self.color = Some(style_value),
+                    "background" => self.background = Some(style_value),
+                    unknown => panic!("Unexpected style kind: {unknown}"),
+                }
+            }
         }
         self
     }
@@ -300,7 +316,7 @@ mod tests {
     fn sanity() {
         let ansi_text = "\x1b[1mBold\x1b[31mRed and Bold";
         let htmlified = ansi_to_html::convert(ansi_text).unwrap();
-        insta::assert_debug_snapshot!(interpret_html(&htmlified), @r#"
+        insta::assert_debug_snapshot!(interpret_html(&htmlified), @r###"
         [
             StylizedText {
                 styles: Styles {
@@ -308,7 +324,9 @@ mod tests {
                     italic: false,
                     underlined: None,
                     crossed_out: false,
-                    spans: {},
+                    opacity: None,
+                    color: None,
+                    background: None,
                 },
                 text: "Bold",
             },
@@ -318,18 +336,27 @@ mod tests {
                     italic: false,
                     underlined: None,
                     crossed_out: false,
-                    spans: {
-                        [
-                            Attr {
-                                name: "style",
-                                value: "color:var(--red,#a00)",
-                            },
-                        ],
-                    },
+                    opacity: None,
+                    color: Some(
+                        "var(--red,#a00)",
+                    ),
+                    background: None,
                 },
                 text: "Red and Bold",
             },
         ]
-        "#);
+        "###);
+    }
+
+    #[test]
+    fn competing_colors() {
+        // Input: blue -> red -> "Red" -> red -> " Still Red"
+        let ansi_text = "\x1b[34;31mRed\x1b[31m Still Red";
+        assert_opt_equiv_to_no_opt(ansi_text);
+        let htmlified = ansi_to_html::convert(ansi_text).unwrap();
+        insta::assert_snapshot!(
+            htmlified,
+            @"<span style='color:var(--blue,#00a)'><span style='color:var(--red,#a00)'>Red Still Red</span></span>"
+        );
     }
 }
