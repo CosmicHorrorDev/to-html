@@ -52,3 +52,23 @@ fn test_run() {
         stderr
     );
 }
+
+#[test]
+fn run_changes_directories() {
+    let temp_dir = tempfile::Builder::new()
+        .prefix("to-html-test-")
+        .tempdir()
+        .unwrap();
+    let base_dir = temp_dir.path();
+    std::fs::File::create(&base_dir.join("file.txt")).unwrap();
+    let pwd = base_dir.join("pwd");
+    std::fs::create_dir(&pwd).unwrap();
+    std::env::set_current_dir(&pwd).unwrap();
+
+    let status = run("cd ..", None).unwrap().2;
+    assert!(status.success());
+    let (stdout, _, status) = run("ls", None).unwrap();
+    assert!(status.success());
+    // replace tabs with 2 spaces to keep formatting consistent across linux/mac
+    assert_eq!(stdout.trim().replace('\t', "  "), "file.txt  pwd");
+}
